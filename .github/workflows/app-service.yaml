@@ -1,0 +1,180 @@
+
+name: Deploy to Azure App Service
+
+on: # defined to trigger the jobs of the workflow
+ workflow_dispatch:
+ 
+jobs:
+   deploying-appservice: 
+      name: Deploying App Service
+      runs-on: [ trumio-orgrunner ]
+      steps:
+        # This task is for checking out the Repository & it downloads the repo contents to the runner
+        - name: Checkout repo
+          uses: actions/checkout@v4 
+         
+        - name: Install Azure cli        
+          run: |
+            sudo apt-get install ca-certificates curl apt-transport-https lsb-release gnupg
+            curl -sL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/microsoft.gpg > /dev/null
+            AZ_REPO=$(lsb_release -cs)
+            echo "deb [arch=amd64] https://packages.microsoft.com/repos/azure-cli/ $AZ_REPO main" | sudo tee /etc/apt/sources.list.d/azure-cli.list
+            sudo apt-get update
+            sudo apt-get install azure-cli
+
+        - name: Login to Azure # Azure Login with User Managed Identity
+          uses: azure/login@v2
+          with:  
+            creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+        # To Check the details of the Subscription
+        - name: Azure CLI script
+          uses: azure/cli@v2
+          with:
+            azcliversion: latest
+            inlineScript: |
+               az account show
+
+        # To Check the resources under this resource group
+        - name: Azure CLI script
+          uses: azure/cli@v2
+          with:
+            azcliversion: latest
+            inlineScript: |
+              az resource list --resource-group ${{ vars.AZURE_RESOURCE_GROUP }} --output table
+
+        # To Create an App Service plan         
+        - name: Creating an app service plan
+          run: |
+            if ! az appservice plan list --resource-group ${{ vars.AZURE_RESOURCE_GROUP }} | grep -q '"name": "kkasp"'; then
+             echo " App service does not exist. Creating it..."
+             az appservice plan create -g ${{ vars.AZURE_RESOURCE_GROUP }} -n ${{ vars.AZURE_APP_SERVICE_PLAN }} --is-linux --sku P0V3
+            else
+              echo "App service plan already exists. Skipping creation..."
+            fi
+            sleep 5
+
+        # To Create an App Service
+        - name: Creating an app service
+          run: |
+            if ! az webapp list --resource-group ${{ vars.AZURE_RESOURCE_GROUP }} | grep -q '"name": "kkphp"'; then
+             echo "App service doesnot exists. Creating it.."
+             az webapp create --name ${{ vars.AZURE_APP_SERVICE_NAME }} --plan ${{ vars.AZURE_APP_SERVICE_PLAN }} --resource-group ${{ vars.AZURE_RESOURCE_GROUP }} --runtime "php|8.3"
+            else
+              echo "App service already exists. Skipping Creation..."
+            fi
+            sleep 10
+
+        # To Create "Staging" Deployment slot 
+        - name: Creating a staging Deployment slot
+          run: |
+            if ! az webapp deployment slot list --name ${{ vars.AZURE_APP_SERVICE_NAME }} --resource-group ${{ vars.AZURE_RESOURCE_GROUP }} | grep -q '"name": "staging"'; then
+             echo "Deployment slot "staging" not exists. Creating it.."
+             az webapp deployment slot create --name ${{ vars.AZURE_APP_SERVICE_NAME }} --resource-group ${{ vars.AZURE_RESOURCE_GROUP }} --slot ${{ vars.SLOT_NAME }}
+            else
+              echo "Staging slot exists. Skipping Creation..."
+            fi
+            sleep 10
+
+        # To check the App Service Publish Profile
+        - name: Get App service Publish profile
+          run: |
+            az webapp deployment list-publishing-profiles --name ${{ vars.AZURE_APP_SERVICE_NAME }} \
+              --resource-group ${{ vars.AZURE_RESOURCE_GROUP }} \
+              --xml 
+
+   # This Job is to Build the Artfiacts by using repository.
+   build-php-app:
+     name: build-php-app
+     runs-on: [ trumio-orgrunner ]
+     needs: [deploying-appservice] # maintains the dependency of the previous job in current job
+     steps:
+      - name: Update package lists
+        run: sudo apt-get update
+
+      - name: Install PHP
+        run: sudo apt-get install -y php
+
+      - name: Verify PHP installation
+        run: php -v
+        
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+           php-version: '8.3'
+ 
+       # To upload the artifacts in the current directory
+      - name: Upload artifact for deployment job
+        uses: actions/upload-artifact@v4
+        with:
+           name: php-app
+           path: .
+                  
+   # This job is to deploy the artifacts in staging slot
+   deploying-artifacts-in-staging-slot:
+      name: Deploy Artifacts into staging slot
+      needs: [deploying-appservice, build-php-app]
+      runs-on: [ trumio-orgrunner ]
+      steps:
+        # To download the artifacts from the build job
+        - name: Download artifact from build job
+          uses: actions/download-artifact@v4
+          with:
+            name: php-app
+
+        # To deploy the artifacts in deployment slot
+        - name: Deploying Artifacts to Staging Slot
+          uses: azure/webapps-deploy@v2
+          with:
+            app-name: ${{ vars.AZURE_APP_SERVICE_NAME }}
+            slot-name: ${{ vars.SLOT_NAME }}
+            package: . # represents the current directory
+        
+        # To get the URL of Staging Slot
+        - name: Get App Service URL of staging slot
+          run: |
+            echo "App Service URL (Staging Slot): https://${{ vars.AZURE_APP_SERVICE_NAME }}-staging.azurewebsites.net"
+          
+   # This job is to deploy the artifacts in production slot with the reviewer's approval
+   deploying-artifacts-in-production-slot:
+     name: Deploy Artifacts into Production Slot
+     runs-on: [ trumio-orgrunner ]
+     needs: [deploying-appservice, build-php-app, deploying-artifacts-in-staging-slot]
+     environment:
+       name: Prod
+     steps:
+       # To wait for the approval to deploy in production slot
+       - name: Approval Status
+         run: |
+           printf "Approval done. Ready to deploy artifacts in Production..."
+           sleep 5
+
+       # Download the artifacts from the build job
+       - name: Download artifact from build job
+         uses: actions/download-artifact@v4
+         with:
+           name: php-app
+
+       # To Deploy the artifacts in Production slot
+       - name: Deploying Artifacts to Production Slot
+         uses: azure/webapps-deploy@v2
+         with:
+            app-name: ${{ vars.AZURE_APP_SERVICE_NAME }}
+            slot-name: production
+            package: . # represents the current directory
+
+       # To get the URL of Production slot
+       - name: Get App Service URL of Production slot
+         run: |
+            echo "App Service URL (Production Slot): https://${{ vars.AZURE_APP_SERVICE_NAME }}.azurewebsites.net"
+            
+
+
+
+
+
+          
+       
+
+    
+             
