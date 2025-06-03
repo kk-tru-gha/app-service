@@ -6,7 +6,7 @@ on: # defined to trigger the jobs of the workflow
  
 jobs:
    deploying-appservice: 
-      name: Deploying App Service
+      name: app-service-creation
       runs-on: [ trumio-orgrunner ]
       steps:
         # This task is for checking out the Repository & it downloads the repo contents to the runner
