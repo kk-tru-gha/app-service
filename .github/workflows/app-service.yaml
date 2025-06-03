@@ -7,7 +7,7 @@ on: # defined to trigger the jobs of the workflow
 jobs:
    deploying-appservice: 
       name: app-service-creation
-      runs-on: [ trumio-orgrunner ]
+      runs-on: trumio-orgrunner 
       steps:
         # This task is for checking out the Repository & it downloads the repo contents to the runner
         - name: Checkout repo
@@ -86,7 +86,7 @@ jobs:
    # This Job is to Build the Artfiacts by using repository.
    build-php-app:
      name: build-php-app
-     runs-on: [ trumio-orgrunner ]
+     runs-on:  trumio-orgrunner 
      needs: [deploying-appservice] # maintains the dependency of the previous job in current job
      steps:
       - name: Update package lists
@@ -114,7 +114,7 @@ jobs:
    deploying-artifacts-in-staging-slot:
       name: Deploy Artifacts into staging slot
       needs: [deploying-appservice, build-php-app]
-      runs-on: [ trumio-orgrunner ]
+      runs-on:  trumio-orgrunner 
       steps:
         # To download the artifacts from the build job
         - name: Download artifact from build job
@@ -138,7 +138,7 @@ jobs:
    # This job is to deploy the artifacts in production slot with the reviewer's approval
    deploying-artifacts-in-production-slot:
      name: Deploy Artifacts into Production Slot
-     runs-on: [ trumio-orgrunner ]
+     runs-on:  trumio-orgrunner 
      needs: [deploying-appservice, build-php-app, deploying-artifacts-in-staging-slot]
      environment:
        name: Prod
