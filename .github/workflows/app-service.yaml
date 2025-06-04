@@ -1,11 +1,7 @@
-
 name: Deploy Azure App Service
 
 on: # defined to trigger the jobs of the workflow
  workflow_dispatch:
- push:
-    branches:
-      - main
  
 jobs:
    deploying-appservice: 
